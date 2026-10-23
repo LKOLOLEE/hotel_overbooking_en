@@ -1,0 +1,70 @@
+# Daily report published to GitHub Pages.
+# Setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Note: a GitHub Pages site is PUBLIC - suitable for a demo on public data,
+# not for real client data (use Azure Static Web Apps with sign-in instead, see README).
+name: Daily report (overbooking)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC = 08:00 CEST (summer) / 07:00 CET (winter) in Central Europe
+  workflow_dispatch:       # manual run: Actions tab -> Run workflow
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-core.txt
+
+      - name: Install libraries
+        run: pip install -r requirements-core.txt
+
+      - name: Restore models and report archive
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            outputs/models
+            outputs/site
+          key: report-${{ github.run_id }}
+          restore-keys: report-
+
+      - name: Daily report (demo mode --replay)
+        run: python daily_run.py --replay
+
+      - name: Save models and archive
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            outputs/models
+            outputs/site
+          key: report-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: outputs/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

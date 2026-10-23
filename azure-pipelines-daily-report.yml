@@ -1,0 +1,59 @@
+# Azure DevOps: daily report published as a static website in Azure Storage.
+# Requirements: a Storage account with "Static website" enabled (the $web container) and a
+# service connection to the Azure subscription with the "Storage Blob Data Contributor" role on it.
+# Fill in the two variables below; in production replace --replay with:  --as-of today --data <PMS export>
+
+trigger: none
+pr: none
+
+schedules:
+  - cron: "0 6 * * *"            # 06:00 UTC = 08:00 CEST (summer) / 07:00 CET (winter)
+    displayName: Daily report
+    branches:
+      include: [ main ]
+    always: true                 # run every day, even with no changes in the repository
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  STORAGE_ACCOUNT: "<storage-account-name>"
+  AZURE_SERVICE_CONNECTION: "<service-connection-name>"
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: "3.12"
+
+  - script: pip install -r requirements-core.txt
+    displayName: Install libraries
+
+  - task: Cache@2
+    displayName: Cache models (no daily retraining)
+    inputs:
+      key: 'models | "$(Agent.OS)" | config.py | src/modeling.py | src/overbooking.py'
+      path: outputs/models
+
+  - task: AzureCLI@2
+    displayName: Download report archive
+    inputs:
+      azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        mkdir -p outputs/site
+        az storage blob download-batch --account-name $(STORAGE_ACCOUNT) --auth-mode login \
+          -s '$web' -d outputs/site --pattern 'archive/*' || true
+
+  - script: python daily_run.py --replay
+    displayName: Daily report
+
+  - task: AzureCLI@2
+    displayName: Publish website
+    inputs:
+      azureSubscription: ${{ variables.AZURE_SERVICE_CONNECTION }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az storage blob upload-batch --account-name $(STORAGE_ACCOUNT) --auth-mode login \
+          -d '$web' -s outputs/site --overwrite
